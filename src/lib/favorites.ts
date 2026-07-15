@@ -15,7 +15,7 @@ export type FavoriteOption = {
 };
 
 export const FAVORITE_CATALOG: FavoriteOption[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, group: "Overview" },
+  { to: "/", label: "Command Center", icon: LayoutDashboard, group: "Overview" },
   { to: "/contacts", label: "Contacts", icon: Users, group: "CRM" },
   { to: "/companies", label: "Companies", icon: Building2, group: "CRM" },
   { to: "/leads", label: "Leads", icon: Target, group: "CRM" },
@@ -26,7 +26,7 @@ export const FAVORITE_CATALOG: FavoriteOption[] = [
   { to: "/files", label: "Files", icon: FolderOpen, group: "Projects" },
   { to: "/inbox", label: "Conversations", icon: Inbox, group: "Inbox" },
   { to: "/inbox/templates", label: "Templates", icon: MessageSquare, group: "Inbox" },
-  { to: "/inbox/broadcasts", label: "Broadcasts", icon: Megaphone, group: "Inbox" },
+  { to: "/marketing", label: "Marketing", icon: Megaphone, group: "Inbox" },
   { to: ROUTES.WORKFLOWS, label: "Workflows", icon: Workflow, group: "Automation" },
   { to: ROUTES.AI_CENTER, label: "AI Center", icon: Bot, group: "Automation" },
   { to: ROUTES.TRIGGERS, label: "Triggers", icon: Bell, group: "Automation" },

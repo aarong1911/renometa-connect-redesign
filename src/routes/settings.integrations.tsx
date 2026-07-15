@@ -1,12 +1,12 @@
 // src/routes/settings.integrations.tsx
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Link2, Search, Plug, CheckCircle2, Circle, AlertTriangle } from "lucide-react";
 import { INTEGRATIONS, CATEGORIES, type Integration, type CategoryId } from "@/lib/integrations-data";
+import { MOCK_MODE } from "@/lib/mock-mode";
 import { IntegrationConfigDrawer } from "@/components/integrations/integration-config-drawer";
 import { cn } from "@/lib/utils";
 import {
@@ -28,7 +28,6 @@ export const Route = createFileRoute("/settings/integrations")({
 
 function IntegrationsSettings() {
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState<CategoryId | "all">("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState<Integration | null>(null);
   const [integrations, setIntegrations] = useState<Integration[]>(INTEGRATIONS);
@@ -36,6 +35,18 @@ function IntegrationsSettings() {
 
   // Load real connection status from org's integration_settings + meta_connections
   useEffect(() => {
+    if (MOCK_MODE) {
+      // A believable mix of connected/not-connected for screenshots — the
+      // most commonly-connected ones (SMS/voice/calendar/email) marked on.
+      const MOCK_CONNECTED_IDS = new Set([
+        "twilio", "google-calendar", "gmail", "meta-lead-ads", "whatsapp",
+        "docusign", "quickbooks",
+      ]);
+      setIntegrations((prev) =>
+        prev.map((i) => ({ ...i, connected: MOCK_CONNECTED_IDS.has(i.id) || i.connected }))
+      );
+      return;
+    }
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -90,13 +101,25 @@ function IntegrationsSettings() {
     })();
   }, []);
 
-  const filtered = useMemo(() => {
-    return integrations.filter((i) => {
-      if (category !== "all" && i.category !== category) return false;
-      if (search && !i.name.toLowerCase().includes(search.toLowerCase()) && !i.vendor.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    });
-  }, [search, category, integrations]);
+  // Category-grouped layout (Lovable design) replaces the old single flat
+  // grid + category-pill filter — every real category from
+  // lib/integrations-data.ts gets its own titled section, and search
+  // narrows within each section rather than switching between them.
+  const bySearch = useMemo(() => {
+    if (!search) return integrations;
+    const q = search.toLowerCase();
+    return integrations.filter((i) => i.name.toLowerCase().includes(q) || i.vendor.toLowerCase().includes(q));
+  }, [search, integrations]);
+
+  const sections = useMemo(() => {
+    return CATEGORIES.filter((c) => c.id !== "all")
+      .map((c) => ({
+        id: c.id as CategoryId,
+        label: c.label,
+        items: bySearch.filter((i) => i.category === c.id),
+      }))
+      .filter((s) => s.items.length > 0);
+  }, [bySearch]);
 
   const total = integrations.length;
   const connectedCount = integrations.filter((i) => i.connected).length;
@@ -134,135 +157,106 @@ function IntegrationsSettings() {
   };
 
   return (
-    <div className="space-y-5">
-      {/* Stats bar */}
+    <div className="space-y-6">
+      {/* Stats — Lovable MetricCard style */}
       <div className="grid grid-cols-3 gap-3">
-        <Card className="flex items-center gap-3 p-4">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary">
-            <Plug className="h-4 w-4 text-muted-foreground" />
-          </div>
-          <div>
-            <p className="text-xl font-bold leading-none">{total}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Total Integrations</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-3 p-4">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success/10">
-            <CheckCircle2 className="h-4 w-4 text-success" />
-          </div>
-          <div>
-            <p className="text-xl font-bold leading-none text-success">{connectedCount}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Connected</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-3 p-4">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <Circle className="h-4 w-4 text-primary" />
-          </div>
-          <div>
-            <p className="text-xl font-bold leading-none text-primary">{availableCount}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Available</p>
-          </div>
-        </Card>
+        <MetricTile icon={Plug} iconBg="bg-info-soft" iconColor="text-info" label="Total Integrations" value={String(total)} />
+        <MetricTile icon={CheckCircle2} iconBg="bg-success-soft" iconColor="text-success" label="Connected" value={String(connectedCount)} />
+        <MetricTile icon={Circle} iconBg="bg-secondary" iconColor="text-foreground" label="Available" value={String(availableCount)} />
       </div>
 
-      {/* Search + category pills */}
-      <div className="space-y-3">
-        <div className="relative max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search integrations…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-9 pl-9 text-sm"
-          />
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setCategory(c.id)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                category === c.id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card text-muted-foreground hover:bg-secondary"
-              )}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
+      {/* Search only — category pills replaced by always-visible grouped sections below */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          placeholder="Search integrations…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-9 pl-9 text-sm"
+        />
       </div>
 
-      {/* Cards grid */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-        {filtered.map((i) => (
-          <Card key={i.id} className="flex flex-col p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary">
-                <Link2 className="h-4.5 w-4.5 text-muted-foreground" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold leading-tight">{i.name}</span>
-                  <Badge
-                    variant="secondary"
-                    className={cn(
-                      "h-5 shrink-0 rounded-full px-1.5 text-[10px]",
+      {/* Category sections — Lovable SectionCard style */}
+      {sections.map((section) => (
+        <Card key={section.id}>
+          <div className="flex h-12 items-center gap-2 border-b border-border px-4">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-violet-soft text-violet">
+              <Plug className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-sm font-semibold text-foreground">{section.label}</span>
+          </div>
+          <CardContent className="p-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {section.items.map((i) => (
+                <div
+                  key={i.id}
+                  className="flex flex-col rounded-lg border border-border/70 bg-card p-3.5 transition-shadow hover:shadow-(--shadow-elev-2)"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-secondary ring-1 ring-black/5">
+                      <Link2 className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="truncate text-[13px] font-semibold text-foreground">{i.name}</span>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">{i.vendor}</p>
+                    </div>
+                  </div>
+
+                  <p className="mt-2.5 line-clamp-2 text-[11.5px] leading-relaxed text-muted-foreground">{i.description}</p>
+
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {i.syncBadges.map((b) => (
+                      <span key={b} className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
+                        {b}
+                      </span>
+                    ))}
+                  </div>
+
+                  {i.connected && i.automations && i.automations.length > 0 && (
+                    <div className="mt-3 rounded-md border border-border bg-muted/50 p-2.5">
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Automations</p>
+                      <ul className="space-y-0.5">
+                        {i.automations.map((a) => (
+                          <li key={a} className="flex items-start gap-1.5 text-[11px] text-foreground">
+                            <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary" />
+                            {a}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="mt-auto flex items-center justify-between gap-2 pt-3">
+                    <span className={cn(
+                      "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1",
                       i.connected
-                        ? "bg-success/15 text-success"
-                        : "bg-muted text-muted-foreground"
-                    )}
-                  >
-                    {i.connected ? "Connected" : "Not connected"}
-                  </Badge>
+                        ? "bg-success-soft text-success ring-success/20"
+                        : "bg-secondary text-muted-foreground ring-border",
+                    )}>
+                      {i.connected ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-2.5 w-2.5" />}
+                      {i.connected ? "Connected" : "Not connected"}
+                    </span>
+                    <div className="flex gap-2">
+                      {i.connected ? (
+                        <>
+                          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openDrawer(i)}>Configure</Button>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => setDisconnectTarget(i)}>Disconnect</Button>
+                        </>
+                      ) : (
+                        <Button size="sm" className="h-7 text-xs" onClick={() => openDrawer(i)}>
+                          {actionLabel(i)}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">{i.vendor}</p>
-              </div>
-            </div>
-
-            <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">{i.description}</p>
-
-            <div className="mt-2 flex flex-wrap gap-1">
-              {i.syncBadges.map((b) => (
-                <span key={b} className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
-                  {b}
-                </span>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      ))}
 
-            {i.connected && i.automations && i.automations.length > 0 && (
-              <div className="mt-3 rounded-md border border-border bg-muted/50 p-2.5">
-                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Automations</p>
-                <ul className="space-y-0.5">
-                  {i.automations.map((a) => (
-                    <li key={a} className="flex items-start gap-1.5 text-[11px] text-foreground">
-                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary" />
-                      {a}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="mt-auto flex gap-2 pt-3">
-              {i.connected ? (
-                <>
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openDrawer(i)}>Configure</Button>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => setDisconnectTarget(i)}>Disconnect</Button>
-                </>
-              ) : (
-                <Button size="sm" className="h-7 text-xs" onClick={() => openDrawer(i)}>
-                  {actionLabel(i)}
-                </Button>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {filtered.length === 0 && (
+      {sections.length === 0 && (
         <div className="py-12 text-center text-sm text-muted-foreground">
           No integrations found.
         </div>
@@ -299,5 +293,23 @@ function IntegrationsSettings() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function MetricTile({
+  icon: Icon, iconBg, iconColor, label, value,
+}: { icon: React.ComponentType<{ className?: string }>; iconBg: string; iconColor: string; label: string; value: string }) {
+  return (
+    <Card>
+      <CardContent className="flex items-center gap-3 p-4">
+        <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", iconBg, iconColor)}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div>
+          <p className="text-xl font-bold leading-none text-foreground">{value}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

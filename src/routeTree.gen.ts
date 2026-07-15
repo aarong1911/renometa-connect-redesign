@@ -15,6 +15,7 @@ import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as MarketingRouteImport } from './routes/marketing'
 import { Route as LeadsRouteImport } from './routes/leads'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
@@ -83,6 +84,11 @@ const PortalRoute = PortalRouteImport.update({
 const OnboardingRoute = OnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketingRoute = MarketingRouteImport.update({
+  id: '/marketing',
+  path: '/marketing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LeadsRoute = LeadsRouteImport.update({
@@ -294,6 +300,7 @@ export interface FileRoutesByFullPath {
   '/forgot-password': typeof ForgotPasswordRoute
   '/inbox': typeof InboxRouteWithChildren
   '/leads': typeof LeadsRoute
+  '/marketing': typeof MarketingRoute
   '/onboarding': typeof OnboardingRoute
   '/portal': typeof PortalRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -341,6 +348,7 @@ export interface FileRoutesByTo {
   '/forgot-password': typeof ForgotPasswordRoute
   '/inbox': typeof InboxRouteWithChildren
   '/leads': typeof LeadsRoute
+  '/marketing': typeof MarketingRoute
   '/onboarding': typeof OnboardingRoute
   '/portal': typeof PortalRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -388,6 +396,7 @@ export interface FileRoutesById {
   '/forgot-password': typeof ForgotPasswordRoute
   '/inbox': typeof InboxRouteWithChildren
   '/leads': typeof LeadsRoute
+  '/marketing': typeof MarketingRoute
   '/onboarding': typeof OnboardingRoute
   '/portal': typeof PortalRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -437,6 +446,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/inbox'
     | '/leads'
+    | '/marketing'
     | '/onboarding'
     | '/portal'
     | '/settings'
@@ -484,6 +494,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/inbox'
     | '/leads'
+    | '/marketing'
     | '/onboarding'
     | '/portal'
     | '/settings'
@@ -530,6 +541,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/inbox'
     | '/leads'
+    | '/marketing'
     | '/onboarding'
     | '/portal'
     | '/settings'
@@ -578,6 +590,7 @@ export interface RootRouteChildren {
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   InboxRoute: typeof InboxRouteWithChildren
   LeadsRoute: typeof LeadsRoute
+  MarketingRoute: typeof MarketingRoute
   OnboardingRoute: typeof OnboardingRoute
   PortalRoute: typeof PortalRoute
   SettingsRoute: typeof SettingsRouteWithChildren
@@ -638,6 +651,13 @@ declare module '@tanstack/react-router' {
       path: '/onboarding'
       fullPath: '/onboarding'
       preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketing': {
+      id: '/marketing'
+      path: '/marketing'
+      fullPath: '/marketing'
+      preLoaderRoute: typeof MarketingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/leads': {
@@ -1002,6 +1022,7 @@ const rootRouteChildren: RootRouteChildren = {
   ForgotPasswordRoute: ForgotPasswordRoute,
   InboxRoute: InboxRouteWithChildren,
   LeadsRoute: LeadsRoute,
+  MarketingRoute: MarketingRoute,
   OnboardingRoute: OnboardingRoute,
   PortalRoute: PortalRoute,
   SettingsRoute: SettingsRouteWithChildren,

@@ -1,72 +1,36 @@
 // src/routes/index.tsx
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import {
-  AreaChart, Area, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts";
+import { AreaChart, Area, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { ROUTES } from "@/lib/routes";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Briefcase, Users, TrendingUp, DollarSign,
-  Plus, FileText, Zap, Phone, Mail, UserPlus,
-  CheckCircle2, Circle, Clock, ArrowUpRight, ArrowDownRight,
-  Download,
+  Plus, FileText, CheckSquare, Contact as ContactIcon,
+  Sparkles, UserPlus, DollarSign, Briefcase, CalendarDays, Zap, AlertTriangle,
+  TrendingUp, Mail, Phone, ArrowRight, Clock, Filter, Flame,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { useOrganization, useTeam } from "@/lib/organization";
+import { useOrganization } from "@/lib/organization";
 import { useTasks } from "@/lib/tasks-store";
+import { useDeals } from "@/lib/deals-store";
+import { usePipelines, useActivePipelineId } from "@/lib/pipelines";
+import { useAICenterAgents } from "@/lib/ai-center-store";
+import { useSmsMetaConversations } from "@/lib/sms-meta-conversations";
+import { ContactAvatar } from "@/components/ui/contact-avatar";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({ component: DashboardPage });
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-type KpiCard = {
-  label: string;
-  value: string;
-  trend: number;
-  spark: { v: number }[];
-  icon: React.ReactNode;
-  href: string;
-  positive?: boolean;
-};
-
-type ActivityItem = {
-  id: string;
-  avatar: string;
-  name: string;
-  action: string;
-  at: string;
-  iconBg: string;
-};
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmt(n: number) {
+function fmtK(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${Math.round(n / 1_000)}k`;
-  return `$${n.toLocaleString()}`;
+  return `$${Math.round(n)}`;
 }
 
-function initials(name: string) {
-  return name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
-}
-
-/** Generate a plausible 8-point sparkline ending at `current`. */
-function spark(current: number, up: boolean): { v: number }[] {
-  const pts: { v: number }[] = [];
-  let v = current * (up ? 0.7 : 1.15);
-  for (let i = 0; i < 8; i++) {
-    v += (Math.random() - (up ? 0.35 : 0.65)) * current * 0.08;
-    v = Math.max(0, v);
-    pts.push({ v: Math.round(v) });
-  }
-  pts.push({ v: current });
-  return pts;
+function daysBetween(a: Date, b: Date): number {
+  return Math.floor((a.getTime() - b.getTime()) / 86_400_000);
 }
 
 async function getOrgId(): Promise<string | null> {
@@ -78,43 +42,127 @@ async function getOrgId(): Promise<string | null> {
   return m?.org_id ?? null;
 }
 
-// ─── Tiny Sparkline ──────────────────────────────────────────────────────────
+// Sparkline noise generator seeded per KPI so each renders a distinct,
+// stable-looking trend line — decorative only, not real historical data
+// (the KPI value/trend numbers themselves are real).
+const spark = (seed: number) =>
+  Array.from({ length: 24 }, (_, i) => {
+    const noise = Math.sin(i * 1.7 + seed * 3.1) * 6 + Math.cos(i * 0.9 + seed) * 4;
+    return { v: 50 + Math.sin(i / 2.4 + seed) * 14 + noise + ((i * (seed + 2)) % 7) };
+  });
 
-function Spark({ data, up }: { data: { v: number }[]; up: boolean }) {
+const STAGE_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#ec4899"];
+
+// ─── KPI cards ────────────────────────────────────────────────────────────────
+
+type Kpi = {
+  icon: React.ElementType; iconBg: string; iconColor: string; label: string;
+  value: string; delta: string; up: boolean; stroke: string; seed: number; href: string;
+};
+
+function KpiCard({ k }: { k: Kpi }) {
+  const Icon = k.icon;
   return (
-    <ResponsiveContainer width={80} height={36}>
-      <LineChart data={data}>
-        <Line
-          type="monotone"
-          dataKey="v"
-          stroke={up ? "#22c55e" : "#ef4444"}
-          strokeWidth={1.5}
-          dot={false}
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    <Link to={k.href} className="group rounded-xl border border-border/70 bg-card p-4 flex flex-col gap-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_4px_16px_-4px_rgba(15,23,42,0.08)] hover:border-border transition-all duration-200">
+      <div className="flex items-center gap-2">
+        <div className={cn("h-8 w-8 rounded-lg grid place-items-center", k.iconBg)}>
+          <Icon className={cn("h-4 w-4", k.iconColor)} />
+        </div>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{k.label}</span>
+      </div>
+      <div className="text-[28px] leading-none font-semibold tracking-tight text-foreground">{k.value}</div>
+      <div className="flex items-center gap-1 text-[11px]">
+        <span className={cn("font-semibold", k.up ? "text-success" : "text-destructive")}>{k.up ? "↑" : "↓"} {k.delta}</span>
+        <span className="text-muted-foreground">vs last period</span>
+      </div>
+      <div className="h-10 -mx-1 opacity-90 group-hover:opacity-100 transition-opacity">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={spark(k.seed)} margin={{ top: 2, bottom: 0, left: 0, right: 0 }}>
+            <defs>
+              <linearGradient id={`g${k.seed}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={k.stroke} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={k.stroke} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="v" stroke={k.stroke} strokeWidth={1.75} fill={`url(#g${k.seed})`} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </Link>
   );
 }
 
-// ─── KPI Card ────────────────────────────────────────────────────────────────
-
-function KpiTile({ k }: { k: KpiCard }) {
-  const up = k.trend >= 0;
+function QuickActions({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
+  const actions = [
+    { icon: ContactIcon, label: "New Contact", action: () => navigate({ to: ROUTES.CONTACTS }) },
+    { icon: Plus, label: "New Deal", action: () => navigate({ to: ROUTES.PIPELINE }) },
+    { icon: FileText, label: "New Estimate", action: () => navigate({ to: "/financials/estimates" }) },
+    { icon: Zap, label: "Run Workflow", action: () => navigate({ to: ROUTES.AI_CENTER }) },
+  ];
   return (
-    <Link to={k.href} className="group">
-      <Card className="p-5 hover:shadow-md transition-shadow">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-muted-foreground">{k.label}</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums leading-tight">{k.value}</p>
-            <div className={cn("mt-1 flex items-center gap-1 text-[11px] font-medium", up ? "text-green-600" : "text-red-500")}>
-              {up ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-              {up ? "+" : ""}{k.trend.toFixed(1)}% vs last period
-            </div>
-          </div>
-          <Spark data={k.spark} up={up} />
+    <div className="rounded-xl border border-border/70 bg-card p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_4px_16px_-4px_rgba(15,23,42,0.08)] transition-shadow">
+      <div className="flex items-center gap-2 mb-3">
+        <Zap className="h-4 w-4 text-gold-hover" />
+        <span className="text-[13px] font-semibold tracking-tight">Quick Actions</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {actions.map(({ icon: Icon, label, action }) => (
+          <button key={label} onClick={action} className="flex items-center gap-2 rounded-lg border border-border/70 bg-background hover:bg-secondary/60 hover:border-border px-3 py-2 text-xs font-medium transition-all">
+            <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Priority Banner — real, derived bullets only ───────────────────────────
+
+function PriorityBanner({ bullets }: { bullets: { dot: string; text: string }[] }) {
+  if (bullets.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-border/70 bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)] px-5 py-3 flex items-center gap-2 overflow-x-auto">
+      <div className="flex items-center gap-2 shrink-0 pr-3 mr-1 border-r border-border/70">
+        <Flame className="h-4 w-4 text-orange" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground/70">Priority Today</span>
+      </div>
+      <ul className="flex items-center gap-1.5 flex-wrap">
+        {bullets.map((it, i) => (
+          <li key={i} className="flex items-center gap-2 rounded-full bg-secondary/60 hover:bg-secondary ring-1 ring-border/60 px-3 py-1 text-[12px] font-medium text-foreground/85 cursor-pointer transition-colors">
+            <span className={cn("h-1.5 w-1.5 rounded-full", it.dot)} />
+            {it.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ─── Shared section shell ───────────────────────────────────────────────────
+
+function SectionCard({ title, icon, iconColor, action, children }: {
+  title: string; icon: React.ElementType; iconColor?: string; action?: React.ReactNode; children: React.ReactNode;
+}) {
+  const Icon = icon;
+  return (
+    <div className="rounded-xl border border-border/70 bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_4px_16px_-4px_rgba(15,23,42,0.08)] transition-shadow duration-200 flex flex-col">
+      <div className="flex items-center justify-between px-5 h-12 border-b border-border/70">
+        <div className="flex items-center gap-2">
+          <Icon className={cn("h-4 w-4", iconColor ?? "text-muted-foreground")} />
+          <span className="text-[13px] font-semibold tracking-tight">{title}</span>
         </div>
-      </Card>
+        {action}
+      </div>
+      <div className="flex-1 p-5">{children}</div>
+    </div>
+  );
+}
+
+function CardAction({ children, to }: { children: React.ReactNode; to: string }) {
+  return (
+    <Link to={to} className="text-[11px] font-medium text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+      {children} <ArrowRight className="h-3 w-3" />
     </Link>
   );
 }
@@ -123,41 +171,138 @@ function KpiTile({ k }: { k: KpiCard }) {
 
 function DashboardPage() {
   const org = useOrganization();
-  const team = useTeam();
   const allTasks = useTasks();
+  const allDeals = useDeals();
+  const pipelines = usePipelines();
+  const activePipelineId = useActivePipelineId();
+  const { instances: aiAgents } = useAICenterAgents();
+  const { conversations } = useSmsMetaConversations();
   const navigate = useNavigate();
 
   const [userName, setUserName] = useState("there");
-  const [loading, setLoading] = useState(true);
-  const [kpis, setKpis] = useState<KpiCard[]>([]);
-  const [velocityData, setVelocityData] = useState<{ week: string; value: number }[]>([]);
-  const [velocityRange, setVelocityRange] = useState<"30d" | "90d" | "1y">("90d");
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [kpiData, setKpiData] = useState({ leads: 0, leadsTrend: 0, pipelineNow: 0, pipelineTrend: 0, projects: 0, projectsTrend: 0, revenue: 0, revenueTrend: 0, bookingsToday: 0 });
+  const [activity, setActivity] = useState<{ id: string; who: string; t: string; s: string; when: string }[]>([]);
+  const [todaysAppointments, setTodaysAppointments] = useState<{ id: string; time: string; who: string; title: string; where: string }[]>([]);
+  const [estimatesAwaiting, setEstimatesAwaiting] = useState<{ id: string; title: string; client_name: string; updated_at: string }[]>([]);
 
-  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 18) return "Good afternoon";
+    return "Good evening";
+  })();
 
-  // Upcoming tasks — todo/in_progress sorted by due, next 5
-  const upcomingTasks = useMemo(() => {
+  const activePipeline = useMemo(
+    () => pipelines.find((p) => p.id === activePipelineId) ?? pipelines[0] ?? null,
+    [pipelines, activePipelineId],
+  );
+
+  const taskCounts = useMemo(() => {
     const now = new Date();
+    const notDone = allTasks.filter(t => t.status !== "done");
+    let overdue = 0, dueToday = 0, upcoming = 0;
+    for (const t of notDone) {
+      const days = daysBetween(new Date(t.due), now);
+      if (days < 0) overdue++;
+      else if (days === 0) dueToday++;
+      else upcoming++;
+    }
+    const done = allTasks.filter(t => t.status === "done").length;
+    const progressPct = (notDone.length + done) > 0 ? Math.round((done / (notDone.length + done)) * 100) : 0;
+    return { overdue, dueToday, upcoming, progressPct };
+  }, [allTasks]);
+
+  const upcomingTasks = useMemo(() => {
     return allTasks
-      .filter((t) => t.status !== "done")
+      .filter(t => t.status !== "done")
       .sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime())
       .slice(0, 5)
-      .map((t) => {
-        const due = new Date(t.due);
-        const diffDays = Math.floor((due.getTime() - now.setHours(0,0,0,0)) / 86400000);
-        const label = diffDays === 0 ? `Today · ${due.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
-          : diffDays === 1 ? `Tomorrow · ${due.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
-          : due.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-        const dot = diffDays === 0 ? "bg-red-500" : diffDays === 1 ? "bg-amber-400" : "bg-gray-300";
-        return { id: t.id, title: t.title, label, dot };
-      });
+      .map(t => ({
+        id: t.id, title: t.title,
+        time: new Date(t.due).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+      }));
   }, [allTasks]);
+
+  const pipelineDistribution = useMemo(() => {
+    const openDeals = allDeals.filter(d => d.stage !== "won" && d.stage !== "lost");
+    const totalValue = openDeals.reduce((s, d) => s + Number(d.value ?? 0), 0);
+    const byStage = new Map<string, { value: number }>();
+    for (const d of openDeals) {
+      const entry = byStage.get(d.stage) ?? { value: 0 };
+      entry.value += Number(d.value ?? 0);
+      byStage.set(d.stage, entry);
+    }
+    const stageName = (slug: string) => activePipeline?.stages.find(s => s.id === slug)?.name ?? slug;
+    const stages = [...byStage.entries()]
+      .map(([slug, { value }], i) => ({
+        slug, name: stageName(slug), value,
+        pct: totalValue > 0 ? Math.round((value / totalValue) * 100) : 0,
+        color: STAGE_COLORS[i % STAGE_COLORS.length],
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    const won = allDeals.filter(d => d.stage === "won");
+    const lost = allDeals.filter(d => d.stage === "lost");
+    const now = new Date();
+    const wonMTD = won.filter(d => new Date(d.expectedClose).getMonth() === now.getMonth()).reduce((s, d) => s + d.value, 0);
+    const lostMTD = lost.filter(d => d.lostAt && new Date(d.lostAt).getMonth() === now.getMonth()).reduce((s, d) => s + d.value, 0);
+    const conversionRate = (won.length + lost.length) > 0 ? Math.round((won.length / (won.length + lost.length)) * 100) : 0;
+    const avgDeal = openDeals.length > 0 ? totalValue / openDeals.length : 0;
+    const avgAge = openDeals.length > 0 ? Math.round(openDeals.reduce((s, d) => s + d.ageDays, 0) / openDeals.length) : 0;
+    const maxWidth = stages.length > 0 ? stages[0].value : 1;
+
+    return {
+      stages: stages.map(s => ({ ...s, barWidth: Math.max(28, Math.round((s.value / maxWidth) * 100)) })),
+      totalValue, openCount: openDeals.length, conversionRate, avgDeal, avgAge, wonMTD, lostMTD,
+    };
+  }, [allDeals, activePipeline]);
+
+  const attentionItems = useMemo(() => {
+    const now = new Date();
+    const items: { id: string; icon: React.ReactNode; color: string; bg: string; title: string; sub: string; badge: string; badgeColor: string; href: string; weight: number }[] = [];
+
+    for (const t of allTasks) {
+      if (t.status === "done") continue;
+      const overdueDays = daysBetween(now, new Date(t.due));
+      if (overdueDays > 0) {
+        items.push({
+          id: `task-${t.id}`, icon: <AlertTriangle className="h-4 w-4" />, color: "text-destructive", bg: "bg-destructive-soft ring-destructive-soft",
+          title: t.title, sub: `Task overdue · ${overdueDays === 1 ? "1 day" : `${overdueDays} days`}`,
+          badge: "Overdue", badgeColor: "bg-destructive-soft text-destructive-soft-foreground ring-1 ring-destructive-soft",
+          href: "/tasks", weight: 100 + Math.min(overdueDays, 30),
+        });
+      }
+    }
+    for (const e of estimatesAwaiting) {
+      const days = daysBetween(now, new Date(e.updated_at));
+      if (days >= 2) {
+        items.push({
+          id: `est-${e.id}`, icon: <FileText className="h-4 w-4" />, color: "text-info", bg: "bg-info-soft ring-info-soft",
+          title: "Estimate awaiting response", sub: `${e.title}${e.client_name ? ` · ${e.client_name}` : ""}`,
+          badge: "Estimate", badgeColor: "bg-info-soft text-info-soft-foreground ring-1 ring-info-soft",
+          href: "/financials/estimates", weight: 70 + Math.min(days, 20),
+        });
+      }
+    }
+    const openDeals = allDeals.filter(d => d.stage !== "won" && d.stage !== "lost");
+    for (const d of openDeals) {
+      if (d.ageDays >= 14) {
+        items.push({
+          id: `deal-${d.id}`, icon: <Clock className="h-4 w-4" />, color: "text-orange", bg: "bg-orange-soft ring-orange-soft",
+          title: "Stale deal — no recent movement", sub: `${d.name}${d.contactName ? ` · ${d.contactName}` : ""}`,
+          badge: "Waiting", badgeColor: "bg-orange-soft text-orange-soft-foreground ring-1 ring-orange-soft",
+          href: ROUTES.PIPELINE, weight: 50 + Math.min(d.ageDays, 40),
+        });
+      }
+    }
+    items.sort((a, b) => b.weight - a.weight);
+    return items.slice(0, 4);
+  }, [allTasks, estimatesAwaiting, allDeals]);
 
   useEffect(() => {
     (async () => {
       const orgId = await getOrgId();
-      if (!orgId) { setLoading(false); return; }
+      if (!orgId) return;
 
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -168,16 +313,17 @@ function DashboardPage() {
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
       const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
 
       const [
-        { count: projCount },
-        { count: projLastCount },
-        { count: leadsCount },
-        { count: leadsLastCount },
-        { data: openDeals },
-        { data: lastDeals },
-        { data: paidInvoices },
-        { data: lastPaidInvoices },
+        { count: projCount }, { count: projLastCount },
+        { count: leadsCount }, { count: leadsLastCount },
+        { data: openDeals }, { data: lastDeals },
+        { data: paidInvoices }, { data: lastPaidInvoices },
+        { count: bookingsCount },
+        { data: apptRows },
+        { data: estRows },
       ] = await Promise.all([
         supabase.from("projects").select("*", { count: "exact", head: true }).eq("org_id", orgId).in("status", ["planning","contracted","pre-construction","active","punch-list"]),
         supabase.from("projects").select("*", { count: "exact", head: true }).eq("org_id", orgId).in("status", ["planning","contracted","pre-construction","active","punch-list"]).lt("created_at", monthStart),
@@ -187,271 +333,366 @@ function DashboardPage() {
         supabase.from("deals").select("value").eq("org_id", orgId).eq("status", "open").lt("created_at", monthStart),
         supabase.from("invoices").select("total_amount").eq("org_id", orgId).eq("status", "paid").gte("created_at", monthStart),
         supabase.from("invoices").select("total_amount").eq("org_id", orgId).eq("status", "paid").gte("created_at", lastMonthStart).lt("created_at", monthStart),
+        supabase.from("appointments").select("*", { count: "exact", head: true }).eq("org_id", orgId).neq("status", "cancelled").gte("scheduled_at", todayStart).lt("scheduled_at", todayEnd),
+        supabase.from("appointments").select("id, scheduled_at, contact_name, service").eq("org_id", orgId).neq("status", "cancelled").gte("scheduled_at", todayStart).lt("scheduled_at", todayEnd).order("scheduled_at", { ascending: true }).limit(6),
+        supabase.from("estimates").select("id, title, client_name, status, updated_at, created_at").eq("org_id", orgId).in("status", ["sent", "viewed"]).order("updated_at", { ascending: false }).limit(10),
       ]);
 
       const pipelineNow = (openDeals ?? []).reduce((s: number, d: any) => s + Number(d.value ?? 0), 0);
       const pipelineLast = (lastDeals ?? []).reduce((s: number, d: any) => s + Number(d.value ?? 0), 0);
       const revNow = (paidInvoices ?? []).reduce((s: number, i: any) => s + Number(i.total_amount ?? 0), 0);
       const revLast = (lastPaidInvoices ?? []).reduce((s: number, i: any) => s + Number(i.total_amount ?? 0), 0);
-
       const pct = (a: number, b: number) => b === 0 ? 0 : ((a - b) / b) * 100;
 
-      setKpis([
-        { label: "Active Projects", value: String(projCount ?? 0), trend: pct(projCount ?? 0, projLastCount ?? 1), spark: spark(projCount ?? 5, (projCount ?? 0) >= (projLastCount ?? 0)), icon: <Briefcase className="h-4 w-4" />, href: ROUTES.PROJECTS },
-        { label: "Open Leads", value: String(leadsCount ?? 0), trend: pct(leadsCount ?? 0, leadsLastCount ?? 1), spark: spark(leadsCount ?? 10, (leadsCount ?? 0) >= (leadsLastCount ?? 0)), icon: <Users className="h-4 w-4" />, href: ROUTES.LEADS },
-        { label: "Pipeline Value", value: fmt(pipelineNow), trend: pct(pipelineNow, pipelineLast || pipelineNow * 0.9), spark: spark(pipelineNow || 100000, pipelineNow >= pipelineLast), icon: <TrendingUp className="h-4 w-4" />, href: ROUTES.PIPELINE },
-        { label: "Revenue MTD", value: fmt(revNow), trend: pct(revNow, revLast || revNow * 1.02), spark: spark(revNow || 50000, revNow >= revLast), icon: <DollarSign className="h-4 w-4" />, href: ROUTES.PIPELINE },
-      ]);
-
-      // Pipeline velocity — fetch deals with created_at and value, group by week
-      const weeksBack = velocityRange === "30d" ? 4 : velocityRange === "90d" ? 12 : 52;
-      const since = new Date(); since.setDate(since.getDate() - weeksBack * 7);
-      const { data: dealHistory } = await supabase
-        .from("deals")
-        .select("created_at, value")
-        .eq("org_id", orgId)
-        .gte("created_at", since.toISOString())
-        .order("created_at", { ascending: true });
-
-      const weekMap: Record<number, number> = {};
-      for (const d of dealHistory ?? []) {
-        const w = Math.floor((new Date(d.created_at).getTime() - since.getTime()) / (7 * 86400000));
-        weekMap[w] = (weekMap[w] ?? 0) + Number(d.value ?? 0);
-      }
-      const vData = Array.from({ length: weeksBack }, (_, i) => ({
-        week: `W${i + 1}`,
-        value: weekMap[i] ?? 0,
-      }));
-      // Smooth with running average so chart doesn't look empty
-      let running = pipelineNow / weeksBack;
-      const smoothed = vData.map((pt) => {
-        running = running * 0.7 + (pt.value || running) * 0.3;
-        return { week: pt.week, value: Math.round(running) };
+      setKpiData({
+        leads: leadsCount ?? 0, leadsTrend: pct(leadsCount ?? 0, leadsLastCount ?? 1),
+        pipelineNow, pipelineTrend: pct(pipelineNow, pipelineLast || pipelineNow * 0.9),
+        projects: projCount ?? 0, projectsTrend: pct(projCount ?? 0, projLastCount ?? 1),
+        revenue: revNow, revenueTrend: pct(revNow, revLast || revNow * 1.02),
+        bookingsToday: bookingsCount ?? 0,
       });
-      setVelocityData(smoothed);
 
-      // Recent activity from multiple sources
+      setTodaysAppointments((apptRows ?? []).map((a: any) => ({
+        id: a.id,
+        time: new Date(a.scheduled_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+        who: a.contact_name || "—",
+        title: `${a.service || "Appointment"} — ${a.contact_name || "—"}`,
+        where: "Scheduled visit",
+      })));
+
+      setEstimatesAwaiting((estRows ?? []).map((e: any) => ({
+        id: e.id, title: e.title, client_name: e.client_name, updated_at: e.updated_at || e.created_at,
+      })));
+
       const [{ data: recentLeads }, { data: recentCalls }, { data: recentInvoices }] = await Promise.all([
         supabase.from("leads").select("id, created_at, contacts!contact_id(full_name), source").eq("org_id", orgId).order("created_at", { ascending: false }).limit(3),
-        supabase.from("voice_calls").select("id, started_at, caller_number, direction, summary").eq("tenant_id", orgId).order("started_at", { ascending: false }).limit(3),
+        supabase.from("voice_calls").select("id, started_at, caller_number, direction, summary").eq("tenant_id", orgId).order("started_at", { ascending: false }).limit(2),
         supabase.from("invoices").select("id, created_at, total_amount, contacts!client_id(full_name)").eq("org_id", orgId).eq("status", "paid").order("created_at", { ascending: false }).limit(2),
       ]);
 
-      const items: ActivityItem[] = [];
+      const items: { id: string; who: string; t: string; s: string; when: string; at: string }[] = [];
       for (const l of recentLeads ?? []) {
         const name = (l as any).contacts?.full_name ?? "Someone";
-        items.push({ id: `l${l.id}`, avatar: initials(name), name, action: `submitted a new lead via ${(l as any).source ?? "website"}`, at: l.created_at, iconBg: "bg-blue-100 text-blue-600" });
+        items.push({ id: `l${l.id}`, who: name, t: "New lead submitted", s: `via ${(l as any).source ?? "website"}`, when: "", at: l.created_at });
       }
       for (const c of recentCalls ?? []) {
-        const num = c.caller_number ?? "unknown";
-        items.push({ id: `c${c.id}`, avatar: num.slice(-2), name: num, action: `${c.direction === "outbound" ? "Outbound" : "Inbound"} call · ${c.summary?.slice(0, 40) ?? ""}`, at: c.started_at, iconBg: "bg-violet-100 text-violet-600" });
+        items.push({ id: `c${c.id}`, who: c.caller_number ?? "Unknown", t: `${c.direction === "outbound" ? "Outbound" : "Inbound"} call`, s: c.summary?.slice(0, 50) ?? "", when: "", at: c.started_at });
       }
       for (const inv of recentInvoices ?? []) {
         const name = (inv as any).contacts?.full_name ?? "Client";
-        items.push({ id: `i${inv.id}`, avatar: initials(name), name, action: `paid invoice (${fmt(Number(inv.total_amount ?? 0))})`, at: inv.created_at, iconBg: "bg-green-100 text-green-600" });
+        items.push({ id: `i${inv.id}`, who: name, t: "Invoice paid", s: fmtK(Number(inv.total_amount ?? 0)), when: "", at: inv.created_at });
       }
       items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-      setActivity(items.slice(0, 6));
-
-      setLoading(false);
+      setActivity(items.slice(0, 5).map(it => ({ ...it, when: formatDistanceToNow(new Date(it.at), { addSuffix: true }) })));
     })();
-  }, [velocityRange]);
+  }, []);
 
-  const yFmt = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`;
-
-  const QUICK_ACTIONS = [
-    { label: "New Contact", icon: UserPlus, action: () => navigate({ to: ROUTES.CONTACTS }) },
-    { label: "New Deal", icon: Plus, action: () => navigate({ to: ROUTES.PIPELINE }) },
-    { label: "New Estimate", icon: FileText, action: () => navigate({ to: "/financials/estimates" }) },
-    { label: "Run Workflow", icon: Zap, action: () => navigate({ to: ROUTES.AI_CENTER }) },
+  const KPIS: Kpi[] = [
+    { icon: UserPlus, iconBg: "bg-info-soft", iconColor: "text-info", label: "New Leads", value: String(kpiData.leads), delta: `${Math.abs(Math.round(kpiData.leadsTrend))}%`, up: kpiData.leadsTrend >= 0, stroke: "#3b82f6", seed: 1, href: ROUTES.LEADS },
+    { icon: DollarSign, iconBg: "bg-success-soft", iconColor: "text-success", label: "Pipeline Value", value: fmtK(kpiData.pipelineNow), delta: `${Math.abs(Math.round(kpiData.pipelineTrend))}%`, up: kpiData.pipelineTrend >= 0, stroke: "#10b981", seed: 2, href: ROUTES.PIPELINE },
+    { icon: Briefcase, iconBg: "bg-violet-soft", iconColor: "text-violet", label: "Active Projects", value: String(kpiData.projects), delta: `${Math.abs(Math.round(kpiData.projectsTrend))}%`, up: kpiData.projectsTrend >= 0, stroke: "#8b5cf6", seed: 3, href: ROUTES.PROJECTS },
+    { icon: DollarSign, iconBg: "bg-orange-soft", iconColor: "text-orange", label: "Revenue", value: fmtK(kpiData.revenue), delta: `${Math.abs(Math.round(kpiData.revenueTrend))}%`, up: kpiData.revenueTrend >= 0, stroke: "#f97316", seed: 4, href: "/financials/invoices" },
+    { icon: CalendarDays, iconBg: "bg-gold-soft", iconColor: "text-gold-hover", label: "Bookings Today", value: String(kpiData.bookingsToday), delta: "0%", up: true, stroke: "#D9AB57", seed: 5, href: ROUTES.CALENDAR },
   ];
 
+  const priorityBullets = useMemo(() => {
+    const bullets: { dot: string; text: string }[] = [];
+    if (taskCounts.overdue > 0) bullets.push({ dot: "bg-destructive", text: `${taskCounts.overdue} overdue task${taskCounts.overdue === 1 ? "" : "s"} require attention` });
+    if (estimatesAwaiting.length > 0) bullets.push({ dot: "bg-orange", text: `${estimatesAwaiting.length} estimate${estimatesAwaiting.length === 1 ? "" : "s"} awaiting response` });
+    if (kpiData.bookingsToday > 0) bullets.push({ dot: "bg-success", text: `${kpiData.bookingsToday} appointment${kpiData.bookingsToday === 1 ? "" : "s"} booked today` });
+    if (kpiData.revenueTrend !== 0) bullets.push({ dot: "bg-info", text: `Revenue ${kpiData.revenueTrend > 0 ? "up" : "down"} ${Math.abs(Math.round(kpiData.revenueTrend))}% vs last period` });
+    return bullets;
+  }, [taskCounts, estimatesAwaiting, kpiData]);
+
+  const aiStats = useMemo(() => {
+    const active = aiAgents.filter(a => a.is_enabled);
+    const runsThisWeek = aiAgents.reduce((s, a) => s + (a.runs_this_week ?? 0), 0);
+    const hoursSaved = aiAgents.reduce((s, a) => s + (a.hours_saved ?? 0), 0);
+    const avgSuccess = aiAgents.length > 0 ? Math.round(aiAgents.reduce((s, a) => s + (a.success_rate ?? 0), 0) / aiAgents.length) : 0;
+    const top = [...aiAgents].sort((a, b) => (b.runs_this_week ?? 0) - (a.runs_this_week ?? 0)).slice(0, 5);
+    return { activeCount: active.length, runsThisWeek, hoursSaved, avgSuccess, top };
+  }, [aiAgents]);
+
+  const inboxPreview = useMemo(() => {
+    return [...conversations].sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()).slice(0, 5);
+  }, [conversations]);
+
+  const unreadCount = useMemo(() => conversations.filter(c => c.unread).length, [conversations]);
+
   return (
-    <div className="space-y-5">
-      {/* ── Header ── */}
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-4">
+      <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold">Welcome back, {userName}</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {today} — here's what's happening at {org.companyName || "your company"}.
+          <h1 className="text-[26px] font-semibold tracking-tight text-foreground">Command Center</h1>
+          <p className="text-[13px] text-muted-foreground mt-0.5">
+            {greeting}, {userName}. Here's what's happening at {org.companyName || "your business"} today.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant="outline" size="sm" className="h-8 gap-1.5">
-            <Download className="h-3.5 w-3.5" /> Export
-          </Button>
-          <Link to={ROUTES.PIPELINE}>
-            <Button size="sm" className="h-8 gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> New Deal
-            </Button>
-          </Link>
-        </div>
       </div>
 
-      {/* ── 4 KPI cards ── */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        {loading
-          ? Array.from({ length: 4 }).map((_, i) => <Card key={i} className="p-5"><Skeleton className="h-20 w-full" /></Card>)
-          : kpis.map((k) => <KpiTile key={k.label} k={k} />)}
+      <PriorityBanner bullets={priorityBullets} />
+
+      {/* KPI row — 5 tiles + Quick Actions, one 6-col grid, matching Lovable exactly */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        {KPIS.map((k) => <KpiCard key={k.label} k={k} />)}
+        <QuickActions navigate={navigate} />
       </div>
 
-      {/* ── Middle row: chart + right panel ── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        {/* Pipeline Velocity */}
-        <Card className="p-5">
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold">Pipeline Velocity</p>
-              <p className="text-xs text-muted-foreground">Weighted value moved through stages — last {velocityRange}</p>
-            </div>
-            <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
-              {(["30d", "90d", "1y"] as const).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setVelocityRange(r)}
-                  className={cn(
-                    "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-                    velocityRange === r ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-          {loading ? (
-            <Skeleton className="h-56 w-full" />
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={velocityData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="vGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="week" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval={velocityRange === "1y" ? 3 : 1} />
-                <YAxis tickFormatter={yFmt} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={48} />
-                <Tooltip
-                  formatter={(v) => [fmt(Number(v ?? 0)), "Value"]}
-                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--background))" }}
-                  labelStyle={{ fontWeight: 600 }}
-                />
-                <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} fill="url(#vGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </Card>
-
-        {/* Right panel */}
-        <div className="space-y-4">
-          {/* Quick Actions */}
-          <Card className="p-4">
-            <p className="mb-3 text-sm font-semibold">Quick Actions</p>
-            <div className="grid grid-cols-2 gap-2">
-              {QUICK_ACTIONS.map((qa) => (
-                <button
-                  key={qa.label}
-                  onClick={qa.action}
-                  className="flex flex-col items-start gap-2 rounded-lg border border-border bg-background p-3 text-left hover:bg-secondary/60 transition-colors"
-                >
-                  <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <qa.icon className="h-3.5 w-3.5" />
+      {/* Needs Attention | Live Pipeline | Inbox */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <SectionCard title="Needs Attention" icon={AlertTriangle} iconColor="text-destructive" action={<CardAction to="/tasks">View all</CardAction>}>
+          <ul className="divide-y divide-border/70 -m-5">
+            {attentionItems.length === 0 ? (
+              <li className="px-5 py-8 text-center text-sm text-muted-foreground">You're all caught up</li>
+            ) : attentionItems.map((it) => (
+              <li key={it.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-secondary/40 transition-colors cursor-pointer">
+                <Link to={it.href} className="contents">
+                  <div className={cn("h-9 w-9 rounded-lg grid place-items-center ring-1", it.bg, it.color)}>{it.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate text-foreground">{it.title}</div>
+                    <div className="text-xs text-muted-foreground truncate mt-0.5">{it.sub}</div>
                   </div>
-                  <span className="text-xs font-medium">{qa.label}</span>
-                </button>
-              ))}
-            </div>
-          </Card>
+                  <span className={cn("text-[10px] font-semibold px-2 py-1 rounded-md", it.badgeColor)}>{it.badge}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
 
-          {/* Upcoming Tasks */}
-          <Card className="p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-semibold">Upcoming Tasks</p>
-              <Link to="/tasks"><span className="text-[11px] text-muted-foreground hover:text-foreground">View all</span></Link>
-            </div>
-            {upcomingTasks.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">No tasks due soon</p>
-            ) : (
-              <div className="divide-y divide-border">
-                {upcomingTasks.map((t) => (
-                  <div key={t.id} className="flex items-start gap-2.5 py-2.5 first:pt-0 last:pb-0">
-                    <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", t.dot)} />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">{t.title}</p>
-                      <p className="text-[11px] text-muted-foreground">{t.label}</p>
+        <SectionCard title="Live Pipeline" icon={TrendingUp} iconColor="text-success" action={<CardAction to={ROUTES.PIPELINE}>View pipeline</CardAction>}>
+          {pipelineDistribution.stages.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">No open deals yet.</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-5">
+                <div className="relative h-44 w-44 shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pipelineDistribution.stages} dataKey="value" innerRadius={58} outerRadius={82} paddingAngle={2} stroke="none">
+                        {pipelineDistribution.stages.map((s, i) => <Cell key={i} fill={s.color} />)}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 grid place-items-center text-center">
+                    <div>
+                      <div className="text-2xl font-semibold tracking-tight">{fmtK(pipelineDistribution.totalValue)}</div>
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">Total Pipeline</div>
                     </div>
+                  </div>
+                </div>
+                <ul className="flex-1 space-y-2 text-sm">
+                  {pipelineDistribution.stages.map((p) => (
+                    <li key={p.slug} className="flex items-center gap-2.5">
+                      <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
+                      <span className="flex-1 text-[13px] text-foreground/80 truncate">{p.name}</span>
+                      <span className="font-semibold text-[13px] tabular-nums">{fmtK(p.value)}</span>
+                      <span className="text-muted-foreground text-[11px] w-10 text-right tabular-nums">{p.pct}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="mt-5 grid grid-cols-5 gap-3 pt-4 border-t border-border/70">
+                {[
+                  { l: "Conversion", v: `${pipelineDistribution.conversionRate}%` },
+                  { l: "Avg Deal", v: fmtK(pipelineDistribution.avgDeal) },
+                  { l: "Avg Age", v: `${pipelineDistribution.avgAge}d` },
+                  { l: "Won MTD", v: fmtK(pipelineDistribution.wonMTD) },
+                  { l: "Lost MTD", v: fmtK(pipelineDistribution.lostMTD) },
+                ].map((s) => (
+                  <div key={s.l}>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{s.l}</div>
+                    <div className="text-sm font-semibold mt-1 tabular-nums">{s.v}</div>
                   </div>
                 ))}
               </div>
-            )}
-          </Card>
-        </div>
+            </>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Inbox" icon={Mail} iconColor="text-violet" action={<CardAction to="/inbox">View inbox</CardAction>}>
+          <div className="flex items-center gap-4 text-[13px] border-b border-border/70 pb-2 -mx-5 px-5 mb-1">
+            <button className="font-semibold text-foreground border-b-2 border-primary pb-1.5 -mb-[9px]">All</button>
+            <button className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+              Unread {unreadCount > 0 && <span className="rounded bg-primary text-primary-foreground text-[10px] font-semibold px-1.5 py-0.5">{unreadCount}</span>}
+            </button>
+            <button className="text-muted-foreground hover:text-foreground transition-colors">Mentions</button>
+          </div>
+          <ul className="divide-y divide-border/60 -mx-5">
+            {inboxPreview.length === 0 ? (
+              <li className="px-5 py-8 text-center text-sm text-muted-foreground">No conversations yet.</li>
+            ) : inboxPreview.map((m) => (
+              <li key={m.id} className={cn("flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors", m.unread ? "bg-info-soft/40" : "hover:bg-secondary/40")}>
+                <Link to="/inbox" className="contents">
+                  <ContactAvatar id={m.id} name={m.contactName} size="md" />
+                  <div className="flex-1 min-w-0">
+                    <div className={cn("text-[13px] truncate", m.unread ? "font-semibold text-foreground" : "font-medium text-foreground")}>{m.contactName}</div>
+                    <div className={cn("text-xs truncate mt-0.5", m.unread ? "text-foreground/70" : "text-muted-foreground")}>{m.preview}</div>
+                  </div>
+                  {m.unread && <span className="h-2 w-2 rounded-full bg-info shrink-0" />}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
       </div>
 
-      {/* ── Bottom row: Recent Activity + Team Today ── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        {/* Recent Activity */}
-        <Card className="p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm font-semibold">Recent Activity</p>
-            <Link to={ROUTES.CALL_LOGS}>
-              <span className="text-[11px] text-muted-foreground hover:text-foreground">View all</span>
-            </Link>
+      {/* Today's Tasks | AI Center | Sales Pipeline Snapshot */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <SectionCard title="Today's Tasks" icon={CheckSquare} iconColor="text-info" action={<CardAction to="/tasks">View tasks</CardAction>}>
+          <div className="flex gap-5">
+            <div className="space-y-2 shrink-0">
+              <div className="rounded-lg bg-destructive-soft ring-1 ring-destructive-soft text-destructive-soft-foreground px-4 py-3 w-24 text-center">
+                <div className="text-2xl font-semibold tabular-nums">{taskCounts.overdue}</div><div className="text-[10px] font-medium uppercase tracking-wider mt-0.5">Overdue</div>
+              </div>
+              <div className="rounded-lg bg-orange-soft ring-1 ring-orange-soft text-orange-soft-foreground px-4 py-3 w-24 text-center">
+                <div className="text-2xl font-semibold tabular-nums">{taskCounts.dueToday}</div><div className="text-[10px] font-medium uppercase tracking-wider mt-0.5">Due Today</div>
+              </div>
+              <div className="rounded-lg bg-info-soft ring-1 ring-info-soft text-info px-4 py-3 w-24 text-center">
+                <div className="text-2xl font-semibold tabular-nums">{taskCounts.upcoming}</div><div className="text-[10px] font-medium uppercase tracking-wider mt-0.5">Upcoming</div>
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              {upcomingTasks.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No tasks due soon.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {upcomingTasks.map((tk) => (
+                    <li key={tk.id} className="flex items-center gap-2.5 text-[13px] group">
+                      <span className="flex-1 truncate group-hover:text-foreground text-foreground/85">{tk.title}</span>
+                      <span className="text-[11px] text-muted-foreground tabular-nums">{tk.time}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-5">
+                <div className="flex items-center justify-between text-[11px] mb-1.5">
+                  <span className="text-muted-foreground uppercase tracking-wider">Progress</span>
+                  <span className="font-semibold tabular-nums">{taskCounts.progressPct}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-secondary overflow-hidden">
+                  <div className="h-full rounded-full bg-success transition-all duration-500" style={{ width: `${taskCounts.progressPct}%` }} />
+                </div>
+              </div>
+            </div>
           </div>
-          {loading ? (
-            <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : activity.length === 0 ? (
+        </SectionCard>
+
+        <SectionCard title="AI Center" icon={Sparkles} iconColor="text-violet" action={<CardAction to={ROUTES.AI_CENTER}>Open AI Center</CardAction>}>
+          <div className="grid grid-cols-4 gap-2.5">
+            {[
+              { l: "Active Agents", v: String(aiStats.activeCount), c: "text-violet" },
+              { l: "Runs This Week", v: String(aiStats.runsThisWeek), c: "text-info" },
+              { l: "Hours Saved", v: `${aiStats.hoursSaved.toFixed(1)}h`, c: "text-success" },
+              { l: "Success Rate", v: `${aiStats.avgSuccess}%`, c: "text-orange" },
+            ].map((s) => (
+              <div key={s.l} className="rounded-lg bg-secondary/60 ring-1 ring-border/60 p-3">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{s.l}</div>
+                <div className={cn("text-lg font-semibold mt-1 tabular-nums", s.c)}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2.5">Top AI Agents</div>
+            {aiStats.top.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No agents configured yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {aiStats.top.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between text-[13px] py-1">
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <span className={cn("h-6 w-6 rounded-md grid place-items-center shrink-0", a.is_enabled ? "bg-violet-soft text-violet" : "bg-secondary text-muted-foreground")}>
+                        <Sparkles className="h-3 w-3" />
+                      </span>
+                      <span className="text-foreground/85 truncate">{a.definition?.name ?? "Agent"}</span>
+                    </span>
+                    <span className={cn("flex items-center gap-1.5 text-[11px] font-medium shrink-0", a.is_enabled ? "text-success" : "text-muted-foreground")}>
+                      <span className={cn("h-1.5 w-1.5 rounded-full", a.is_enabled ? "bg-success" : "bg-muted-foreground/50")} />
+                      {a.is_enabled ? "Active" : "Idle"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </SectionCard>
+
+        <SectionCard title="Sales Pipeline Snapshot" icon={Filter} iconColor="text-success" action={<CardAction to={ROUTES.PIPELINE}>View pipeline</CardAction>}>
+          {pipelineDistribution.stages.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No open deals yet.</p>
+          ) : (
+            <div className="grid grid-cols-[1.15fr_auto] gap-x-5 items-start">
+              <div className="space-y-2.5">
+                {pipelineDistribution.stages.map((r) => (
+                  <div key={r.slug} className="flex flex-col items-center gap-1">
+                    <div className="h-10 rounded-md flex items-center justify-center text-white text-[11px] font-semibold shadow-sm transition-all hover:brightness-110"
+                      style={{ background: r.color, width: `${r.barWidth}%` }}>
+                      {r.name}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground tabular-nums">{fmtK(r.value)} · {r.pct}%</div>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-4 text-xs min-w-[110px]">
+                {[
+                  { l: "Win Rate", v: `${pipelineDistribution.conversionRate}%` },
+                  { l: "Open Deals", v: String(pipelineDistribution.openCount) },
+                  { l: "Avg Deal", v: fmtK(pipelineDistribution.avgDeal) },
+                  { l: "Cycle Time", v: `${pipelineDistribution.avgAge}d` },
+                ].map((s) => (
+                  <div key={s.l}>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{s.l}</div>
+                    <div className="text-base font-semibold mt-0.5 tabular-nums">{s.v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Recent Activity | Today's Schedule */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SectionCard title="Recent Activity" icon={Clock} iconColor="text-info" action={<CardAction to={ROUTES.CALL_LOGS}>View all activity</CardAction>}>
+          {activity.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No recent activity yet.</p>
           ) : (
-            <div className="divide-y divide-border">
-              {activity.map((item) => (
-                <div key={item.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                  <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold", item.iconBg)}>
-                    {item.avatar}
+            <ul className="-my-1">
+              {activity.map((it) => (
+                <li key={it.id} className="flex items-center gap-3 py-2 hover:bg-secondary/40 -mx-2 px-2 rounded-md transition-colors">
+                  <ContactAvatar id={it.id} name={it.who} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-medium truncate">{it.t}</div>
+                    <div className="text-xs text-muted-foreground truncate">{it.who} · {it.s}</div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm">
-                      <span className="font-semibold">{item.name}</span>{" "}
-                      <span className="text-muted-foreground">{item.action}</span>
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {formatDistanceToNow(new Date(item.at), { addSuffix: true })}
-                    </p>
-                  </div>
-                </div>
+                  <div className="text-[11px] text-muted-foreground tabular-nums shrink-0">{it.when}</div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-        </Card>
+        </SectionCard>
 
-        {/* Team Today */}
-        <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm font-semibold">Team Today</p>
-            <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
-              {Math.min(team.length, 5)} online
-            </span>
-          </div>
-          {team.length === 0 ? (
-            <p className="py-4 text-center text-xs text-muted-foreground">No team members yet.</p>
+        <SectionCard title="Today's Schedule" icon={CalendarDays} iconColor="text-violet" action={<CardAction to={ROUTES.CALENDAR}>View calendar</CardAction>}>
+          {todaysAppointments.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No appointments today.</p>
           ) : (
-            <div className="space-y-3">
-              {team.slice(0, 5).map((m) => (
-                <div key={m.id} className="flex items-start gap-2.5">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
-                    {initials(m.name || m.email)}
+            <ul className="space-y-1">
+              {todaysAppointments.map((e) => (
+                <li key={e.id} className="grid grid-cols-[56px_1fr] gap-3 items-center py-2 hover:bg-secondary/40 -mx-2 px-2 rounded-md transition-colors cursor-pointer">
+                  <div className="text-[12px] font-semibold text-muted-foreground tabular-nums text-right">{e.time}</div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <ContactAvatar id={e.id} name={e.who} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-medium truncate">{e.title}</div>
+                      <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5 truncate">
+                        <Phone className="h-3 w-3 shrink-0" /> {e.where}
+                      </div>
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold">{m.name || m.email}</p>
-                    <p className="truncate text-[11px] text-muted-foreground capitalize">{m.role.replace("_", " ")}</p>
-                  </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-        </Card>
+        </SectionCard>
       </div>
     </div>
   );

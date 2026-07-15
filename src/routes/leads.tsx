@@ -4,8 +4,9 @@ import { PageHeader } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ContactAvatar } from "@/components/ui/contact-avatar";
 import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
@@ -288,7 +289,13 @@ function LeadsPage() {
 
   return (
     <>
-      <PageHeader title="Leads" subtitle="Track and qualify inbound leads" actions={
+      <PageHeader
+        icon={Target}
+        iconBg="bg-info-soft"
+        iconColor="text-info"
+        title="Leads"
+        subtitle="Track and qualify inbound leads"
+        actions={
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={handleExport}>
             <Download className="mr-1.5 h-3.5 w-3.5" /> Export
@@ -307,10 +314,10 @@ function LeadsPage() {
 
       {/* KPIs */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <KpiCard label="Total Leads" value={String(stats.total)} icon={Target} />
-        <KpiCard label="New" value={String(stats.newCount)} icon={Plus} />
-        <KpiCard label="Hot Leads" value={String(stats.hot)} icon={Flame} />
-        <KpiCard label="Converted" value={String(stats.converted)} icon={ArrowRight} />
+        <KpiCard label="Total Leads" value={String(stats.total)} icon={Target} tone="info" />
+        <KpiCard label="New" value={String(stats.newCount)} icon={Plus} tone="violet" />
+        <KpiCard label="Hot Leads" value={String(stats.hot)} icon={Flame} tone="destructive" />
+        <KpiCard label="Converted" value={String(stats.converted)} icon={ArrowRight} tone="success" />
       </div>
 
       {/* Filters */}
@@ -356,11 +363,7 @@ function LeadsPage() {
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8 shrink-0">
-                          <AvatarFallback className="bg-primary-soft text-[11px] font-medium text-primary">
-                            {lead.name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
-                          </AvatarFallback>
-                        </Avatar>
+                        <ContactAvatar id={lead.id} name={lead.name} size="sm" />
                         <div className="min-w-0">
                           <div className="truncate font-medium">{lead.name}</div>
                           <div className="truncate text-[11px] text-muted-foreground">{lead.email}</div>
@@ -383,9 +386,7 @@ function LeadsPage() {
                     <td className="hidden px-4 py-3 text-xs tabular-nums sm:table-cell">{formatMoney(lead.estimatedBudget)}</td>
                     <td className="hidden px-4 py-3 lg:table-cell">
                       <div className="flex items-center gap-1.5">
-                        <Avatar className="h-5 w-5">
-                          <AvatarFallback className="bg-secondary text-[9px]">{lead.ownerInitials}</AvatarFallback>
-                        </Avatar>
+                        <ContactAvatar id={lead.owner} name={lead.owner} size="xs" />
                         <span className="text-xs">{lead.owner}</span>
                       </div>
                     </td>
@@ -679,10 +680,17 @@ function FilterSelect({ value, onChange, options }: { value: string; onChange: (
   );
 }
 
-function KpiCard({ label, value, icon: Icon }: { label: string; value: string; icon: React.ComponentType<{ className?: string }> }) {
+const KPI_TONE_CLASSES = {
+  info: { badge: "bg-info-soft", icon: "text-info" },
+  violet: { badge: "bg-violet-soft", icon: "text-violet" },
+  destructive: { badge: "bg-destructive-soft", icon: "text-destructive" },
+  success: { badge: "bg-success-soft", icon: "text-success" },
+} as const;
+
+function KpiCard({ label, value, icon: Icon, tone = "info" }: { label: string; value: string; icon: React.ComponentType<{ className?: string }>; tone?: keyof typeof KPI_TONE_CLASSES }) {
   return (
     <Card className="flex items-center gap-3 p-4">
-      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft text-primary">
+      <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", KPI_TONE_CLASSES[tone].badge, KPI_TONE_CLASSES[tone].icon)}>
         <Icon className="h-4 w-4" />
       </div>
       <div>

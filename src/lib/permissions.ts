@@ -14,9 +14,9 @@ const PROJECTS    = "/projects";
 const TASKS       = "/tasks";
 const CALENDAR    = "/calendar";
 const FILES       = "/files";
-const INBOX       = "/inbox";           // includes /inbox/templates + /inbox/broadcasts
+const INBOX       = "/inbox";           // includes /inbox/templates
 const TEMPLATES   = "/inbox/templates";
-const BROADCASTS  = "/inbox/broadcasts";
+const MARKETING   = "/marketing";
 const AUTOMATION  = "/automation";
 const ESTIMATES   = "/financials/estimates";
 const INVOICES    = "/financials/invoices";
@@ -35,7 +35,7 @@ export const ROLE_ALLOWED_ROUTES: Record<Role, string[] | "*"> = {
   admin: [
     DASHBOARD, CONTACTS, COMPANIES, LEADS, PIPELINE,
     PROJECTS, TASKS, CALENDAR, FILES,
-    INBOX, TEMPLATES, BROADCASTS,
+    INBOX, TEMPLATES, MARKETING,
     AUTOMATION,           // covers /automation/workflows, /agents, /triggers
     ESTIMATES, INVOICES, PAYMENTS,
     ANALYTICS, REPUTATION,
@@ -45,7 +45,7 @@ export const ROLE_ALLOWED_ROUTES: Record<Role, string[] | "*"> = {
   office_manager: [
     DASHBOARD, CONTACTS, COMPANIES, LEADS, PIPELINE,
     PROJECTS, TASKS, CALENDAR, FILES,
-    INBOX, TEMPLATES, BROADCASTS,
+    INBOX, TEMPLATES, MARKETING,
     ESTIMATES, INVOICES, PAYMENTS,
   ],
 
@@ -59,7 +59,7 @@ export const ROLE_ALLOWED_ROUTES: Record<Role, string[] | "*"> = {
   // Sales focus — NO projects execution, NO invoices/payments, NO automation/analytics
   sales: [
     DASHBOARD, CONTACTS, COMPANIES, LEADS, PIPELINE,
-    INBOX, TEMPLATES, BROADCASTS,
+    INBOX, TEMPLATES, MARKETING,
     ESTIMATES,
   ],
 

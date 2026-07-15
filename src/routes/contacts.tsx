@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ContactAvatar } from "@/components/ui/contact-avatar";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -304,6 +304,9 @@ function ContactsPage() {
   return (
     <>
       <PageHeader
+        icon={Users}
+        iconBg="bg-info-soft"
+        iconColor="text-info"
         title="Contacts"
         subtitle="People and homeowners across all your projects."
         breadcrumb={["CRM", "Contacts"]}
@@ -409,11 +412,7 @@ function ContactsPage() {
                   </td>
                   <td className="py-2.5 pr-4">
                     <div className="flex items-center gap-2.5">
-                      <Avatar className="h-7 w-7">
-                        <AvatarFallback className="bg-primary-soft text-[10px] font-medium text-primary">
-                          {c.name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
-                        </AvatarFallback>
-                      </Avatar>
+                      <ContactAvatar id={c.id} name={c.name} size="sm" className="h-7 w-7" />
                       <div className="font-medium">{c.name}</div>
                     </div>
                   </td>
@@ -863,11 +862,7 @@ function ContactDrawer({
           <>
             <SheetHeader className="space-y-3 border-b border-border pb-4">
               <div className="flex items-start gap-3">
-                <Avatar className="mt-0.5 h-12 w-12">
-                  <AvatarFallback className="bg-primary-soft text-sm font-medium text-primary">
-                    {contact.name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
-                  </AvatarFallback>
-                </Avatar>
+                <ContactAvatar id={contact.id} name={contact.name} size="lg" className="mt-0.5" />
                 <div className="min-w-0 flex-1 text-left">
                   <SheetTitle className="truncate text-base">{contact.name}</SheetTitle>
                   <SheetDescription className="truncate text-xs">
